@@ -1,0 +1,304 @@
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+bundle = joblib.load(
+    BASE_DIR / "ML" / "models" / "smarttrip.joblib"
+)
+destinations = bundle["df"].copy()
+
+activites = pd.read_csv(
+    BASE_DIR / "ML" / "dataset" / "all_activites_clean.csv"
+)
+
+INTERETS = [
+    "culture",
+    "nature",
+    "adventure",
+    "gastronomy",
+    "nightlife",
+]
+
+COLONNES_SCORES = [f"{interet}_score" for interet in INTERETS]
+
+TEMPERATURES = {
+    "chaud": 29,
+    "doux": 21,
+    "froid": 9,
+}
+
+
+def normaliser(valeur):
+    return " ".join(str(valeur).strip().lower().split())
+
+
+# Utiliser la même normalisation pour les données et les recherches.
+for colonne in ["country", "destination", "name"]:
+    activites[f"{colonne}_norm"] = (
+        activites[colonne].fillna("").map(normaliser)
+    )
+
+
+def recommander_destinations(profil, methode="weighted", limite=5):
+    budget_jour = float(profil["budget_total"]) / profil["jours"]
+
+    data = destinations.loc[
+        (destinations["month"] == profil["mois"])
+        & (destinations["budget_usd_day"] <= budget_jour)
+    ].copy()
+
+    climat = profil["climat"]
+
+    if climat == "chaud":
+        data = data.loc[data["avg_temp_c"] >= 24].copy()
+    elif climat == "doux":
+        data = data.loc[
+            data["avg_temp_c"].between(15, 27)
+        ].copy()
+    else:
+        data = data.loc[data["avg_temp_c"] <= 16].copy()
+
+    if data.empty:
+        return data
+
+    # Même normalisation que dans le notebook :
+    # min et max calculés sur toutes les destinations.
+    minimums = destinations[COLONNES_SCORES].min()
+    amplitudes = (
+        destinations[COLONNES_SCORES].max() - minimums
+    ).replace(0, 1)
+
+    scores_normalises = (
+        (data[COLONNES_SCORES] - minimums) / amplitudes
+    ).clip(0, 1)
+
+    colonnes = [
+        f"{interet}_score"
+        for interet in profil["interets"]
+        if interet in INTERETS
+    ]
+
+    if not colonnes:
+        raise ValueError("Aucun intérêt reconnu.")
+
+    valeurs = scores_normalises[colonnes].to_numpy(dtype=float)
+
+    score_activites = (
+        0.7 * valeurs.mean(axis=1)
+        + 0.3 * valeurs.min(axis=1)
+    )
+
+    score_climat = (
+        1
+        - abs(data["avg_temp_c"] - TEMPERATURES[climat]) / 20
+    ).clip(0, 1).to_numpy()
+
+    score_budget = (
+        1 - data["budget_usd_day"] / budget_jour
+    ).clip(0, 1).to_numpy()
+
+    if methode == "weighted":
+        scores = (
+            0.7 * score_activites
+            + 0.2 * score_climat
+            + 0.1 * score_budget
+        )
+
+    elif methode == "cosine":
+        normes = np.linalg.norm(valeurs, axis=1)
+        denominateur = normes * np.sqrt(valeurs.shape[1])
+
+        similarites = np.divide(
+            valeurs.sum(axis=1),
+            denominateur,
+            out=np.zeros(len(valeurs), dtype=float),
+            where=denominateur != 0,
+        )
+
+        scores = similarites * score_activites
+
+    elif methode == "knn":
+        # Score Manhattan utilisé par ton notebook.
+        distances = np.abs(valeurs - 1).sum(axis=1)
+        scores = 1 / (1 + distances)
+
+    else:
+        raise ValueError("Méthode inconnue.")
+
+    data["score"] = scores
+
+    return (
+        data.sort_values("score", ascending=False, kind="stable")
+        .drop_duplicates(["country", "destination"])
+        .head(limite)
+        .reset_index(drop=True)
+    )
+
+
+def selection_equilibree(data, preferences, limite):
+    """Alterner les centres d'intérêt sans répéter une activité."""
+    preferences = list(dict.fromkeys(preferences))
+
+    data = (
+        data.sort_values(
+            "completude",
+            ascending=False,
+            kind="stable",
+        )
+        .drop_duplicates(["country_norm", "destination_norm", "name_norm"])
+        .reset_index(drop=True)
+    )
+
+    groupes = {
+        preference: data.index[
+            data["preference_smarttrip"] == preference
+        ].tolist()
+        for preference in preferences
+    }
+
+    selection = []
+
+    while len(selection) < limite:
+        ajout = False
+
+        for preference in preferences:
+            if groupes[preference]:
+                selection.append(groupes[preference].pop(0))
+                ajout = True
+
+                if len(selection) == limite:
+                    break
+
+        if not ajout:
+            break
+
+    # Même vide, le résultat conserve ses colonnes.
+    return data.loc[selection].reset_index(drop=True)
+
+
+def valeur_json(valeur):
+    if pd.isna(valeur):
+        return None
+    if isinstance(valeur, np.generic):
+        return valeur.item()
+    return valeur
+
+
+def construire_planning(destination, pays, profil):
+    jours = int(profil["jours"])
+    preferences = list(dict.fromkeys(profil["interets"]))
+
+    # Le pays évite de mélanger des villes portant le même nom.
+    locales = activites.loc[
+        (activites["destination_norm"] == normaliser(destination))
+        & (activites["country_norm"] == normaliser(pays))
+        & (activites["name_norm"] != "")
+    ].copy()
+
+    jour = selection_equilibree(
+        locales.loc[
+            (locales["moment"] == "jour")
+            & locales["preference_smarttrip"].isin(preferences)
+        ],
+        preferences,
+        limite=jours * 3,
+    )
+
+    # Comportement conservé de ton notebook :
+    # gastronomie et vie nocturne ajoutées pour la soirée.
+    preferences_soir = list(
+        dict.fromkeys(preferences + ["gastronomy", "nightlife"])
+    )
+
+    soir = selection_equilibree(
+        locales.loc[
+            (locales["moment"] == "soir_possible")
+            & locales["preference_smarttrip"].isin(preferences_soir)
+            & ~locales["name_norm"].isin(jour["name_norm"])
+        ],
+        preferences_soir,
+        limite=jours,
+    )
+
+    def convertir(ligne):
+        return {
+            "nom": valeur_json(ligne["name"]),
+            "categorie": valeur_json(ligne["category"]),
+            "interet": valeur_json(ligne["preference_smarttrip"]),
+            "latitude": valeur_json(ligne["latitude"]),
+            "longitude": valeur_json(ligne["longitude"]),
+            "horaires": valeur_json(ligne.get("opening_hours")),
+            "site_web": valeur_json(ligne.get("website")),
+        }
+
+    planning = []
+
+    for numero in range(1, jours + 1):
+        debut = (numero - 1) * 3
+
+        planning.append({
+            "jour": numero,
+            "activites_jour": [
+                convertir(ligne)
+                for _, ligne in jour.iloc[debut:debut + 3].iterrows()
+            ],
+            "activites_soir": [
+                convertir(ligne)
+                for _, ligne in soir.iloc[numero - 1:numero].iterrows()
+            ],
+        })
+
+    avertissements = []
+
+    if len(jour) < jours * 3:
+        avertissements.append(
+            f"Seulement {len(jour)} activités de jour disponibles "
+            f"sur {jours * 3} demandées."
+        )
+
+    if len(soir) < jours:
+        avertissements.append(
+            f"Seulement {len(soir)} activités de soirée disponibles "
+            f"sur {jours} demandées."
+        )
+
+    return planning, avertissements
+
+
+def recommander_voyage(profil, methode="weighted"):
+    classement = recommander_destinations(profil, methode)
+    resultats = []
+
+    for _, destination in classement.iterrows():
+        planning, avertissements = construire_planning(
+            destination["destination"],
+            destination["country"],
+            profil,
+        )
+
+        resultats.append({
+            "destination": destination["destination"],
+            "pays": destination["country"],
+            "score": round(float(destination["score"]), 4),
+            "budget_estime_par_jour_usd": float(
+                destination["budget_usd_day"]
+            ),
+            "planning": planning,
+            "avertissements": avertissements,
+        })
+
+    return {
+        "methode": methode,
+        "nombre_destinations": len(resultats),
+        "destinations": resultats,
+        "message": (
+            None
+            if resultats
+            else "Aucune destination ne correspond à ces préférences."
+        ),
+    }

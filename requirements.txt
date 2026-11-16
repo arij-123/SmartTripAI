@@ -1,0 +1,37 @@
+# API et serveur de développement
+fastapi[standard]>=0.115.12,<0.116
+
+# Traitement des données
+numpy>=2.2.6,<2.3
+pandas>=2.2.3,<2.3
+
+# Recommandation : normalisation, similarité cosinus et KNN
+scikit-learn>=1.6.1,<1.7
+
+# Sauvegarde et chargement des modèles
+joblib>=1.4.2,<1.5
+
+# MLOps : suivi des expériences, paramètres et métriques
+mlflow>=2.22.0,<2.23
+
+# Tests des fonctions et de l’API
+pytest>=8.3.5,<9
+httpx>=0.28.1,<0.29
+
+# Connexion PostgreSQL
+psycopg[binary]>=3.3.9,<3.4
+
+# Chargement de la configuration locale
+python-dotenv>=1.1,<2
+
+# Hachage des mots de passe
+pwdlib[argon2]>=0.3.0,<0.4
+
+# Validation des adresses email
+email-validator>=2.3.0,<3
+
+#
+PyJWT>=2.15.1,<3
+
+#	Versions des CSV et des fichiers .joblib
+dvc>=3,<4
