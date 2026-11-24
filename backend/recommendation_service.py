@@ -12,9 +12,13 @@ bundle = joblib.load(
 )
 destinations = bundle["df"].copy()
 
-activites = pd.read_csv(
-    BASE_DIR / "ML" / "dataset" / "all_activites_clean.csv"
+activity_bundle = joblib.load(
+    BASE_DIR / "ML" / "models" / "activity_model.joblib"
 )
+
+activites = activity_bundle["df"].copy()
+
+categories_smarttrip = activity_bundle["categories"]
 
 INTERETS = [
     "culture",
@@ -32,17 +36,35 @@ TEMPERATURES = {
     "froid": 9,
 }
 
+#def get_activity_name(activity):
+ #   for col in ["name_en", "name_fr", "name"]:
+  #      value = activity.get(col)
+
+   #     if pd.notna(value):
+   #         value = str(value).strip()
+
+   #         if value and value.lower() not in ["none", "nan", "null"]:
+   #             return value
+
+   # return "Unnamed activity"
 
 def normaliser(valeur):
     return " ".join(str(valeur).strip().lower().split())
 
 
-# Utiliser la même normalisation pour les données et les recherches.
-for colonne in ["country", "destination", "name"]:
-    activites[f"{colonne}_norm"] = (
-        activites[colonne].fillna("").map(normaliser)
+if "name_display" not in activites.columns:
+    raise ValueError(
+        "La colonne 'name_display' manque dans activity_model.joblib. "
+        "Vérifie que ML/models/activity_model.joblib contient bien "
+        "le tableau enrichi exporté depuis Kaggle."
     )
 
+
+# Clés utilisées pour retrouver la ville et éviter les activités répétées.
+for colonne in ("country", "destination"):
+    activites[f"{colonne}_norm"] = activites[colonne].fillna("").map(normaliser)
+
+activites["name_norm"] = activites["name_display"].fillna("").map(normaliser)
 
 def recommander_destinations(profil, methode="weighted", limite=5):
     budget_jour = float(profil["budget_total"]) / profil["jours"]
@@ -193,79 +215,87 @@ def construire_planning(destination, pays, profil):
     jours = int(profil["jours"])
     preferences = list(dict.fromkeys(profil["interets"]))
 
-    # Le pays évite de mélanger des villes portant le même nom.
+    if "rubrique" not in activites.columns:
+        raise ValueError(
+            "Le fichier activity_model.joblib chargé est une ancienne version. "
+            "Utilise celui exporté par le notebook avec la colonne 'rubrique'."
+        )
+
     locales = activites.loc[
         (activites["destination_norm"] == normaliser(destination))
         & (activites["country_norm"] == normaliser(pays))
         & (activites["name_norm"] != "")
-    ].copy()
+    ]
 
-    jour = selection_equilibree(
-        locales.loc[
-            (locales["moment"] == "jour")
-            & locales["preference_smarttrip"].isin(preferences)
-        ],
-        preferences,
-        limite=jours * 3,
-    )
+    def choisir_activites(moment, noms_utilises):
+        candidates = locales.loc[
+            locales["rubrique"].eq("activites")
+            & locales["moment"].eq(moment)
+            & ~locales["name_norm"].isin(noms_utilises)
+        ]
 
-    # Comportement conservé de ton notebook :
-    # gastronomie et vie nocturne ajoutées pour la soirée.
-    preferences_soir = list(
-        dict.fromkeys(preferences + ["gastronomy", "nightlife"])
-    )
+        # Priorité aux intérêts du voyageur.
+        choix = selection_equilibree(candidates, preferences, limite=jours)
 
-    soir = selection_equilibree(
-        locales.loc[
-            (locales["moment"] == "soir_possible")
-            & locales["preference_smarttrip"].isin(preferences_soir)
-            & ~locales["name_norm"].isin(jour["name_norm"])
-        ],
-        preferences_soir,
-        limite=jours,
-    )
+        # Compléter avec d'autres intérêts si le séjour est plus long.
+        manque = jours - len(choix)
+        if manque > 0:
+            restantes = candidates.loc[
+                ~candidates["name_norm"].isin(choix["name_norm"])
+            ]
+            complement = selection_equilibree(restantes, INTERETS, limite=manque)
+            choix = pd.concat([choix, complement], ignore_index=True)
 
-    def convertir(ligne):
-        return {
-            "nom": valeur_json(ligne["name"]),
+        return choix
+
+    jour = choisir_activites("jour", set())
+    noms_utilises = set(jour["name_norm"])
+
+    soir = choisir_activites("soir_possible", noms_utilises)
+    noms_utilises.update(soir["name_norm"])
+
+    # Une adresse où manger, même si le voyageur n'a pas coché gastronomie.
+    adresses_food = locales.loc[
+        locales["rubrique"].eq("repas")
+        & ~locales["name_norm"].isin(noms_utilises)
+    ]
+    repas = selection_equilibree(adresses_food, ["gastronomy"], limite=jours)
+
+    def lieu_pour_ce_jour(table, index):
+        if index >= len(table):
+            return []
+
+        ligne = table.iloc[index]
+        return [{
+            "nom": valeur_json(ligne["name_display"]),
             "categorie": valeur_json(ligne["category"]),
             "interet": valeur_json(ligne["preference_smarttrip"]),
             "latitude": valeur_json(ligne["latitude"]),
             "longitude": valeur_json(ligne["longitude"]),
             "horaires": valeur_json(ligne.get("opening_hours")),
             "site_web": valeur_json(ligne.get("website")),
+        }]
+
+    planning = [
+        {
+            "jour": index + 1,
+            "activites_jour": lieu_pour_ce_jour(jour, index),
+            "activites_soir": lieu_pour_ce_jour(soir, index),
+            "repas": lieu_pour_ce_jour(repas, index),
         }
-
-    planning = []
-
-    for numero in range(1, jours + 1):
-        debut = (numero - 1) * 3
-
-        planning.append({
-            "jour": numero,
-            "activites_jour": [
-                convertir(ligne)
-                for _, ligne in jour.iloc[debut:debut + 3].iterrows()
-            ],
-            "activites_soir": [
-                convertir(ligne)
-                for _, ligne in soir.iloc[numero - 1:numero].iterrows()
-            ],
-        })
+        for index in range(jours)
+    ]
 
     avertissements = []
-
-    if len(jour) < jours * 3:
-        avertissements.append(
-            f"Seulement {len(jour)} activités de jour disponibles "
-            f"sur {jours * 3} demandées."
-        )
-
-    if len(soir) < jours:
-        avertissements.append(
-            f"Seulement {len(soir)} activités de soirée disponibles "
-            f"sur {jours} demandées."
-        )
+    for titre, table in [
+        ("Activités en journée", jour),
+        ("Sorties du soir", soir),
+        ("Adresses où manger", repas),
+    ]:
+        if len(table) < jours:
+            avertissements.append(
+                f"{titre} : {len(table)} suggestion(s) pour {jours} jour(s)."
+            )
 
     return planning, avertissements
 

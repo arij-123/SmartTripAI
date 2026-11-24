@@ -6,7 +6,8 @@ from psycopg.rows import dict_row
 from auth import get_current_user
 from database import get_connection
 from recommendation_service import recommander_voyage
-
+from photo_service import obtenir_photo_ville
+from hotel_service import recommander_hotels
 
 router = APIRouter(
     prefix="/profiles",
@@ -44,8 +45,22 @@ def obtenir_recommandations(
             status_code=404,
             detail="Profil introuvable.",
         )
+    
 
     resultat = recommander_voyage(profil, methode)
+    for destination in resultat["destinations"]:
+        # Photo de la destination
+        destination["photo"] = obtenir_photo_ville(
+            destination["destination"],
+            destination["pays"],
+        )
+
+        # Les 5 hôtels les mieux classés dans cette ville
+        destination["hotels"] = recommander_hotels(
+            pays=destination["pays"],
+            ville=destination["destination"],
+            top_n=5,
+        )
 
     return {
         "profile_id": profil["id"],
