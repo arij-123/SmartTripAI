@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./App.css";
+import Hotels from "./Hotels";
 
 const INTERETS = {
   culture: "Culture",
@@ -446,27 +447,68 @@ export default function App() {
                   </div>
 
                   <div className="destination-grid">
-                    {resultat.destinations.map((item, index) => (
-                      <button
-                        key={`${item.pays}-${item.destination}`}
-                        className={`destination-card ${
-                          selection === index ? "selected" : ""
-                        }`}
-                        onClick={() => setSelection(index)}
-                        aria-pressed={selection === index}
-                      >
-                        <span className="rank">CHOIX {index + 1}</span>
-                        <h3>{item.destination}</h3>
-                        <span>{item.pays}</span>
-                        <div className="price">
-                          {Number(item.budget_estime_par_jour_usd).toFixed(0)}
-                          {" USD "}
-                          <small>/ jour estimé</small>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+  {resultat.destinations.map((item, index) => (
+    <div key={`${item.pays}-${item.destination}`}>
+      <button
+        className={`destination-card ${
+          selection === index ? "selected" : ""
+        }`}
+        onClick={() => setSelection(index)}
+        aria-pressed={selection === index}
+      >
+        {item.photo?.image_url ? (
+          <img
+            key={item.photo.image_url}
+            className="destination-image"
+            src={item.photo.image_url}
+            alt={`Photo proposée pour ${item.destination}`}
+            loading="lazy"
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        ) : (
+          <div className="destination-placeholder">
+            Photo indisponible
+          </div>
+        )}
 
+        <span className="rank">CHOIX {index + 1}</span>
+
+        <h3>{item.destination}</h3>
+        <span>{item.pays}</span>
+
+        <div className="price">
+          {Number(item.budget_estime_par_jour_usd).toFixed(0)}
+          {" USD "}
+          <small>/ jour estimé</small>
+        </div>
+      </button>
+
+      {item.photo && (
+        <p className="photo-credit">
+          Photo par{" "}
+          <a
+            href={item.photo.photographer_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {item.photo.photographer}
+          </a>
+          {" sur "}
+          <a
+            href={item.photo.unsplash_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Unsplash
+          </a>
+        </p>
+      )}
+    </div>
+  ))}
+</div>
+{destination && <Hotels destination={destination} />}
                   {destination && (
                     <div className="panel itinerary">
                       <div className="eyebrow">03 — VOTRE PROGRAMME</div>
@@ -507,6 +549,16 @@ export default function App() {
                               )}
                             </div>
                           </div>
+                          <section className="day-food">
+                            <h4>Où manger</h4>
+                            {jour.repas?.length ? (
+                              <ul>
+                                <Activite activite={jour.repas[0]} />
+                              </ul>
+                            ) : (
+                              <p className="muted">Aucune adresse disponible.</p>
+                            )}
+                          </section>
                         </article>
                       ))}
                     </div>
