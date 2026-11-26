@@ -1,6 +1,7 @@
 import { useState } from "react";
 import "./App.css";
 import Hotels from "./Hotels";
+import AssistantPlanning from "./AssistantPlanning";
 
 const INTERETS = {
   culture: "Culture",
@@ -508,61 +509,82 @@ export default function App() {
     </div>
   ))}
 </div>
-{destination && <Hotels destination={destination} />}
-                  {destination && (
-                    <div className="panel itinerary">
-                      <div className="eyebrow">03 — VOTRE PROGRAMME</div>
-                      <h2>À la découverte de {destination.destination}</h2>
-                      <p className="muted">
-                        Suggestions à adapter à votre rythme. Vérifiez les
-                        horaires, les tarifs et les trajets avant vos visites.
-                      </p>
+{destination && (
+  <>
+    <Hotels destination={destination} />
 
-                      {destination.avertissements?.map((message) => (
-                        <div className="notice" key={message}>{message}</div>
-                      ))}
+    <AssistantPlanning
+      key={JSON.stringify([
+        resultat.profile_id,
+        destination.pays,
+        destination.destination,
+      ])}
+      api={api}
+      destination={destination}
+      resultat={resultat}
+      token={token}
+    />
 
-                      {destination.planning.map((jour) => (
-                        <article className="day" key={jour.jour}>
-                          <h3><span>{jour.jour}</span> Jour {jour.jour}</h3>
-                          <div className="two-columns day-columns">
-                            <div>
-                              <h4>En journée</h4>
-                              <ul>
-                                {jour.activites_jour.map((activite, index) => (
-                                  <Activite key={index} activite={activite} />
-                                ))}
-                              </ul>
-                              {!jour.activites_jour.length && (
-                                <p className="muted">Aucune activité disponible.</p>
-                              )}
-                            </div>
-                            <div>
-                              <h4>Suggestion de soirée</h4>
-                              <ul>
-                                {jour.activites_soir.map((activite, index) => (
-                                  <Activite key={index} activite={activite} />
-                                ))}
-                              </ul>
-                              {!jour.activites_soir.length && (
-                                <p className="muted">Soirée libre.</p>
-                              )}
-                            </div>
-                          </div>
-                          <section className="day-food">
-                            <h4>Où manger</h4>
-                            {jour.repas?.length ? (
-                              <ul>
-                                <Activite activite={jour.repas[0]} />
-                              </ul>
-                            ) : (
-                              <p className="muted">Aucune adresse disponible.</p>
-                            )}
-                          </section>
-                        </article>
-                      ))}
-                    </div>
-                  )}
+    <div className="panel itinerary">
+      <div className="eyebrow">03 — VOTRE PROGRAMME</div>
+      <h2>À la découverte de {destination.destination}</h2>
+
+      <p className="muted">
+        Suggestions à adapter à votre rythme. Vérifiez les horaires,
+        les tarifs et les trajets avant vos visites.
+      </p>
+
+      {destination.avertissements?.map((message) => (
+        <div className="notice" key={message}>
+          {message}
+        </div>
+      ))}
+
+      {destination.planning.map((jour) => (
+        <article className="day" key={jour.jour}>
+          <h3>
+            <span>{jour.jour}</span> Jour {jour.jour}
+          </h3>
+
+          <div className="two-columns day-columns">
+            <div>
+              <h4>En journée</h4>
+              {jour.activites_jour?.length ? (
+                <ul>
+                  <Activite activite={jour.activites_jour[0]} />
+                </ul>
+              ) : (
+                <p className="muted">Aucune activité disponible.</p>
+              )}
+            </div>
+
+            <div>
+              <h4>Suggestion de soirée</h4>
+              {jour.activites_soir?.length ? (
+                <ul>
+                  <Activite activite={jour.activites_soir[0]} />
+                </ul>
+              ) : (
+                <p className="muted">Soirée libre.</p>
+              )}
+            </div>
+          </div>
+
+          <section className="day-food">
+            <h4>Où manger</h4>
+            {jour.repas?.length ? (
+              <ul>
+                <Activite activite={jour.repas[0]} />
+              </ul>
+            ) : (
+              <p className="muted">Aucune adresse disponible.</p>
+            )}
+          </section>
+        </article>
+      ))}
+    </div>
+  </>
+)}
                 </>
               )}
             </section>
